@@ -77,7 +77,7 @@
       :items="groups"
       class="mt-4"
     >
-      <template v-slot:no-data>
+      <template #no-data>
         Нет данных по выбранным фильтрам
       </template>
     </v-data-table>

@@ -1,10 +1,13 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
-using Microsoft.IdentityModel.Tokens;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace dekanat_api
 {
+    public record StudentUpdateDto(int Id, string Fio);
+
     public class Program
     {
         public static void Main(string[] args)
@@ -12,29 +15,71 @@ namespace dekanat_api
             var builder = WebApplication.CreateBuilder(args);
             builder.Services.AddCors();
             var app = builder.Build();
+
             app.UseCors(policy =>
                 policy.AllowAnyOrigin()
                       .AllowAnyHeader()
                       .AllowAnyMethod()
             );
+
             var configuration = app.Configuration;
 
-            app.MapGet("/groups",
-                (
+            app.MapGet("/groups", (
                 [FromQuery] string? факультет,
                 [FromQuery] string? формаОбучения,
                 [FromQuery] string? уровеньОбучения,
                 [FromQuery] string? учебныйГод,
-                [FromQuery] string? курсы
-                ) =>
+                [FromQuery] string? курсы,
+                [FromQuery] int page = 1,
+                [FromQuery] int pageSize = 10) =>
+            {
+                var connectionString = configuration.GetConnectionString("DefaultConnection");
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+
+                var baseWhereClause = " WHERE Все_Группы.Удалена = 0 ";
+                var command = new SqlCommand { Connection = connection };
+
+                if (!string.IsNullOrEmpty(факультет))
                 {
-                    var connectionString = configuration.GetConnectionString("DefaultConnection");
+                    baseWhereClause += " AND Все_Группы.Код_Факультета = @Факультет";
+                    command.Parameters.AddWithValue("@Факультет", факультет);
+                }
+                if (!string.IsNullOrEmpty(формаОбучения))
+                {
+                    baseWhereClause += " AND Все_Группы.Форма_Обучения = @ФормаОбучения";
+                    command.Parameters.AddWithValue("@ФормаОбучения", формаОбучения);
+                }
+                if (!string.IsNullOrEmpty(уровеньОбучения))
+                {
+                    baseWhereClause += " AND Все_Группы.Уровень = @УровеньОбучения";
+                    command.Parameters.AddWithValue("@УровеньОбучения", уровеньОбучения);
+                }
+                if (!string.IsNullOrEmpty(учебныйГод))
+                {
+                    baseWhereClause += " AND Все_Группы.УчебныйГод = @УчебныйГод";
+                    command.Parameters.AddWithValue("@УчебныйГод", учебныйГод);
+                }
 
-                    using var connection = new SqlConnection(connectionString);
-                    connection.Open();
+                int[]? coursesArray = null;
+                if (!string.IsNullOrEmpty(курсы))
+                {
+                    coursesArray = курсы.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(int.Parse).ToArray();
+                    if (coursesArray.Length > 0)
+                    {
+                        var courseParams = coursesArray.Select((c, i) => $"@Курс{i}").ToList();
+                        baseWhereClause += $" AND Все_Группы.Курс IN ({string.Join(",", courseParams)})";
+                        for (int i = 0; i < coursesArray.Length; i++)
+                            command.Parameters.AddWithValue($"@Курс{i}", coursesArray[i]);
+                    }
+                }
 
-                    var query = @"
+                command.CommandText = $"SELECT COUNT(*) FROM Все_Группы {baseWhereClause}";
+                int totalCount = (int)command.ExecuteScalar();
+
+                var query = $@"
                     SELECT 
+                        Все_Группы.Код as GroupId,
                         Все_Группы.Название as НазваниеГруппы,
                         Факультеты.Факультет as Факультет,
                         Все_Группы.Специальность,
@@ -46,93 +91,146 @@ namespace dekanat_api
                     LEFT JOIN Факультеты ON Факультеты.Код = Все_Группы.Код_Факультета
                     LEFT JOIN ФормаОбучения ON ФормаОбучения.Код = Все_Группы.Форма_Обучения
                     LEFT JOIN Уровень_образования ON Уровень_образования.Код_записи = Все_Группы.Уровень
-                    WHERE 1=1";
+                    {baseWhereClause}
+                    ORDER BY Все_Группы.Код DESC
+                    OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
 
-                    var command = new SqlCommand();
-                    command.Connection = connection;
+                command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                command.Parameters.AddWithValue("@PageSize", pageSize);
+                command.CommandText = query;
 
-                    if (!string.IsNullOrEmpty(факультет))
+                var groups = new List<object>();
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    groups.Add(new
                     {
-                        query += " AND Все_Группы.Код_Факультета = @Факультет";
-                        command.Parameters.AddWithValue("@Факультет", факультет);
+                        GroupId = Convert.ToInt32(reader["GroupId"]),
+                        НазваниеГруппы = reader["НазваниеГруппы"].ToString(),
+                        Факультет = reader["Факультет"].ToString(),
+                        Специальность = reader["Специальность"].ToString(),
+                        Курс = Convert.ToInt32(reader["Курс"]),
+                        ФормаОбучения = reader["ФормаОбучения"].ToString(),
+                        УровеньОбучения = reader["УровеньОбучения"].ToString(),
+                        УчебныйГод = reader["УчебныйГод"].ToString()
+                    });
+                }
+
+                return Results.Json(new { Total = totalCount, Items = groups });
+            });
+
+            
+            app.MapGet("/students", (
+                [FromQuery] int groupId,
+                [FromQuery] string? пол,
+                [FromQuery] int? статус,
+                [FromQuery] int page = 1,
+                [FromQuery] int pageSize = 10) =>
+            {
+                var connectionString = configuration.GetConnectionString("DefaultConnection");
+                using var connection = new SqlConnection(connectionString);
+                connection.Open();
+
+                var baseWhereClause = " WHERE Код_Группы = @GroupId ";
+                var command = new SqlCommand { Connection = connection };
+                command.Parameters.AddWithValue("@GroupId", groupId);
+
+                if (!string.IsNullOrEmpty(пол))
+                {
+                    baseWhereClause += " AND Пол = @Пол";
+                    command.Parameters.AddWithValue("@Пол", пол);
+                }
+
+                if (статус.HasValue)
+                {
+                    baseWhereClause += " AND Статус = @Статус";
+                    command.Parameters.AddWithValue("@Статус", статус.Value);
+                }
+
+                command.CommandText = $"SELECT COUNT(*) FROM Студенты {baseWhereClause}";
+                int totalCount = (int)command.ExecuteScalar();
+
+                var query = $@"
+                    SELECT ID, ФИО, Пол, Дата_Рождения, Номер_Зачетки, Средний_Балл, Статус 
+                    FROM Студенты
+                    {baseWhereClause}
+                    ORDER BY ФИО
+                    OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
+
+                command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
+                command.Parameters.AddWithValue("@PageSize", pageSize);
+                command.CommandText = query;
+
+                var students = new List<object>();
+                using var reader = command.ExecuteReader();
+                while (reader.Read())
+                {
+                    students.Add(new
+                    {
+                        Id = Convert.ToInt32(reader["ID"]),
+                        Fio = reader["ФИО"].ToString(),
+                        Gender = reader["Пол"].ToString(),
+                        RecordBook = reader["Номер_Зачетки"].ToString(),
+                        Gpa = Convert.ToDecimal(reader["Средний_Балл"]),
+                        Status = Convert.ToInt32(reader["Статус"])
+                    });
+                }
+
+                return Results.Json(new { Total = totalCount, Items = students });
+            });
+
+            app.MapPut("/students", async (List<StudentUpdateDto> updates, IConfiguration config) =>
+            {
+                if (updates == null || updates.Count == 0) return Results.Ok();
+
+                var connectionString = config.GetConnectionString("DefaultConnection");
+                using var connection = new SqlConnection(connectionString);
+                await connection.OpenAsync();
+
+                using var transaction = connection.BeginTransaction();
+                try
+                {
+                    var command = new SqlCommand
+                    {
+                        Connection = connection,
+                        Transaction = transaction,
+                        CommandText = "UPDATE Студенты SET ФИО = @Fio WHERE ID = @Id"
+                    };
+
+                    var idParam = command.Parameters.Add("@Id", System.Data.SqlDbType.Int);
+                    var fioParam = command.Parameters.Add("@Fio", System.Data.SqlDbType.NVarChar, 150);
+
+                    foreach (var update in updates)
+                    {
+                        idParam.Value = update.Id;
+                        fioParam.Value = update.Fio;
+                        await command.ExecuteNonQueryAsync();
                     }
 
-                    if (!string.IsNullOrEmpty(формаОбучения))
-                    {
-                        query += " AND Все_Группы.Форма_Обучения = @ФормаОбучения";
-                        command.Parameters.AddWithValue("@ФормаОбучения", формаОбучения);
-                    }
-
-                    if (!string.IsNullOrEmpty(уровеньОбучения))
-                    {
-                        query += " AND Все_Группы.Уровень = @УровеньОбучения";
-                        command.Parameters.AddWithValue("@УровеньОбучения", уровеньОбучения);
-                    }
-
-                    if (!string.IsNullOrEmpty(учебныйГод))
-                    {
-                        query += " AND Все_Группы.УчебныйГод = @УчебныйГод";
-                        command.Parameters.AddWithValue("@УчебныйГод", учебныйГод);
-                    }
-
-                    int[]? courses = null;
-                    if (!string.IsNullOrEmpty(курсы))
-                    {
-                        courses = курсы.Split(',', StringSplitOptions.RemoveEmptyEntries)
-                                 .Select(int.Parse)
-                                 .ToArray();
-                    }
-
-                    if (courses != null && courses.Length > 0)
-                    {
-                        var courseParams = courses.Select((c, i) => $"@Курс{i}").ToList();
-                        query += $" AND Все_Группы.Курс IN ({string.Join(",", courseParams)})";
-
-                        for (int i = 0; i < courses.Length; i++)
-                        {
-                            command.Parameters.AddWithValue($"@Курс{i}", courses[i]);
-                        }
-                    }
-
-                    command.CommandText = query;
-
-                    var groups = new List<object>();
-
-                    using var reader = command.ExecuteReader();
-                    while (reader.Read())
-                    {
-                        groups.Add(new
-                        {
-                            НазваниеГруппы = reader["НазваниеГруппы"].ToString(),
-                            Факультет = reader["Факультет"].ToString(),
-                            Специальность = reader["Специальность"].ToString(),
-                            Курс = Convert.ToInt32(reader["Курс"]),
-                            ФормаОбучения = reader["ФормаОбучения"].ToString(),
-                            УровеньОбучения = reader["УровеньОбучения"].ToString(),
-                            УчебныйГод = reader["УчебныйГод"].ToString()
-                        });
-                    }
-
-                    return Results.Json(groups);
-                });
+                    await transaction.CommitAsync();
+                    return Results.Ok(new { message = "Данные успешно сохранены" });
+                }
+                catch (Exception ex)
+                {
+                    await transaction.RollbackAsync();
+                    return Results.Problem(ex.Message);
+                }
+            });
 
             app.MapGet("/filters", () =>
             {
                 var connectionString = configuration.GetConnectionString("DefaultConnection");
-
                 using var connection = new SqlConnection(connectionString);
                 connection.Open();
 
-                var result = new
+                return Results.Json(new
                 {
                     Faculties = GetFaculties(connection),
                     Forms = GetForms(connection),
                     Levels = GetLevels(connection),
                     Courses = GetCourses(connection),
                     Years = GetYears(connection)
-                };
-
-                return Results.Json(result);
+                });
             });
 
             app.Run();
@@ -140,94 +238,47 @@ namespace dekanat_api
 
         static List<object> GetFaculties(SqlConnection connection)
         {
-            var query = "SELECT Код, Факультет FROM Факультеты ORDER BY Факультет";
-            var command = new SqlCommand(query, connection);
-
-            var faculties = new List<object>();
+            var command = new SqlCommand("SELECT Код, Факультет FROM Факультеты ORDER BY Факультет", connection);
+            var result = new List<object>();
             using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                faculties.Add(new
-                {
-                    value = Convert.ToInt32(reader["Код"]),
-                    text = reader["Факультет"].ToString()
-                });
-            }
-            return faculties;
+            while (reader.Read()) result.Add(new { value = Convert.ToInt32(reader["Код"]), text = reader["Факультет"].ToString() });
+            return result;
         }
 
         static List<object> GetForms(SqlConnection connection)
         {
-            var query = "SELECT Код, ФормаОбучения FROM ФормаОбучения ORDER BY Код";
-            var command = new SqlCommand(query, connection);
-
-            var forms = new List<object>();
+            var command = new SqlCommand("SELECT Код, ФормаОбучения FROM ФормаОбучения ORDER BY Код", connection);
+            var result = new List<object>();
             using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                forms.Add(new
-                {
-                    value = Convert.ToInt32(reader["Код"]),
-                    text = reader["ФормаОбучения"].ToString()
-                });
-            }
-            return forms;
+            while (reader.Read()) result.Add(new { value = Convert.ToInt32(reader["Код"]), text = reader["ФормаОбучения"].ToString() });
+            return result;
         }
 
         static List<object> GetLevels(SqlConnection connection)
         {
-            var query = "SELECT Код_записи, Уровень FROM Уровень_образования ORDER BY Код_записи";
-            var command = new SqlCommand(query, connection);
-
-            var levels = new List<object>();
+            var command = new SqlCommand("SELECT Код_записи, Уровень FROM Уровень_образования ORDER BY Код_записи", connection);
+            var result = new List<object>();
             using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                levels.Add(new
-                {
-                    value = Convert.ToInt32(reader["Код_записи"]),
-                    text = reader["Уровень"].ToString()
-                });
-            }
-            return levels;
+            while (reader.Read()) result.Add(new { value = Convert.ToInt32(reader["Код_записи"]), text = reader["Уровень"].ToString() });
+            return result;
         }
 
         static List<object> GetCourses(SqlConnection connection)
         {
-            var query = "SELECT DISTINCT Курс FROM Все_Группы WHERE Курс IS NOT NULL ORDER BY Курс";
-            var command = new SqlCommand(query, connection);
-
-            var courses = new List<object>();
+            var command = new SqlCommand("SELECT DISTINCT Курс FROM Все_Группы WHERE Курс IS NOT NULL ORDER BY Курс", connection);
+            var result = new List<object>();
             using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                courses.Add(new
-                {
-                    value = Convert.ToInt32(reader["Курс"]),
-                    text = $"{reader["Курс"]} курс"
-                });
-            }
-            return courses;
+            while (reader.Read()) result.Add(new { value = Convert.ToInt32(reader["Курс"]), text = $"{reader["Курс"]} курс" });
+            return result;
         }
 
         static List<object> GetYears(SqlConnection connection)
         {
-            var query = "SELECT DISTINCT УчебныйГод FROM Все_Группы WHERE УчебныйГод IS NOT NULL ORDER BY УчебныйГод DESC";
-            var command = new SqlCommand(query, connection);
-
-            var years = new List<object>();
+            var command = new SqlCommand("SELECT DISTINCT УчебныйГод FROM Все_Группы WHERE УчебныйГод IS NOT NULL ORDER BY УчебныйГод DESC", connection);
+            var result = new List<object>();
             using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                years.Add(new
-                {
-                    value = reader["УчебныйГод"].ToString(),
-                    text = reader["УчебныйГод"].ToString()
-                });
-            }
-            return years;
+            while (reader.Read()) result.Add(new { value = reader["УчебныйГод"].ToString(), text = reader["УчебныйГод"].ToString() });
+            return result;
         }
-
     }
 }
-

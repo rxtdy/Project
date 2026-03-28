@@ -8,6 +8,9 @@
       </v-col>
       <v-col>
         <h1>Студенты группы: {{ groupName || id }}</h1>
+        <p class="small font-weight-thin" v-if="groupName">
+          id: {{ id }}
+        </p>
       </v-col>
       <v-col cols="auto">
         <v-btn v-if="!isEditing" color="primary" @click="startEdit">Редактировать</v-btn>
@@ -19,11 +22,11 @@
     <v-row>
       <v-col cols="12" md="3">
         <v-select label="Пол" :items="genderOptions" item-text="text" item-value="value" 
-          v-model="filters.gender" clearable @change="triggerSearch"></v-select>
+          v-model="filters.gender" clearable @change="loadStudents"></v-select>
       </v-col>
       <v-col cols="12" md="3">
         <v-select label="Статус" :items="statusOptions" item-text="text" item-value="value" 
-          v-model="filters.status" clearable @change="triggerSearch"></v-select>
+          v-model="filters.status" clearable @change="loadStudents"></v-select>
       </v-col>
     </v-row>
 
@@ -37,9 +40,13 @@
     <v-data-table
       :headers="headers"
       :items="students"
-      :options.sync="internalOptions"
-      :server-items-length="totalStudents"
+      :items-per-page="10"
       :loading="loading"
+      :footer-props="{
+        'items-per-page-options': [5, 10, -1],
+        'items-per-page-text': 'Записей на странице:',
+        'page-text': '{0}-{1} из {2}'
+      }"
       class="elevation-1 mt-4"
     >
       <template v-slot:[`item.fio`]="{ item }">
@@ -69,18 +76,14 @@ export default {
   props: {
     id: { required: true },
     groupName: { type: String, default: '' },
-    page: { type: Number, default: 1 },
-    pageSize: { type: Number, default: 10 }
   },
   data() {
     return {
       students: [],
       originalStudents: [],
-      totalStudents: 0,
       loading: false,
       saving: false,
       isEditing: false,
-      internalOptions: { page: this.page, itemsPerPage: this.pageSize },
       filters: { gender: null, status: null },
       genderOptions: [
         { text: 'Мужской', value: 'Муж' },
@@ -102,28 +105,12 @@ export default {
       ]
     };
   },
-  watch: {
-    internalOptions: {
-      handler(val) {
-        this.$router.push({ 
-          query: { 
-            ...this.$route.query, 
-            spage: val.page, 
-            spageSize: val.itemsPerPage 
-          } 
-        }).catch(() => {});
-        this.loadStudents();
-      },
-      deep: true
-    },
-    page(val) { if (this.internalOptions.page !== val) this.internalOptions.page = val; },
-    pageSize(val) { if (this.internalOptions.itemsPerPage !== val) this.internalOptions.itemsPerPage = val; }
+
+  mounted() {
+    this.loadStudents();
   },
+
   methods: {
-    triggerSearch() {
-      this.internalOptions.page = 1;
-      this.loadStudents();
-    },
     async loadStudents() {
       this.loading = true;
       try {
@@ -131,12 +118,9 @@ export default {
           groupId: this.id,
           пол: this.filters.gender,
           статус: this.filters.status,
-          page: this.page,
-          pageSize: this.pageSize
         };
         const { data } = await axios.get(`${API_URL}/students`, { params });
         this.students = data.items;
-        this.totalStudents = data.total;
         this.originalStudents = JSON.parse(JSON.stringify(this.students));
       } catch (error) {
         this.showSnack("Ошибка загрузки", "error");

@@ -22,8 +22,6 @@ const routes = [
     props: route => ({ 
       id: Number(route.params.id),
       groupName: route.query.groupName || '',
-      page: parseInt(route.query.spage) || 1, 
-      pageSize: parseInt(route.query.spageSize) || 10 
     })
   }
 ];

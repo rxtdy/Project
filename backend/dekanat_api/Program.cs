@@ -154,11 +154,8 @@ namespace dekanat_api
                     SELECT ID, ФИО, Пол, Дата_Рождения, Номер_Зачетки, Средний_Балл, Статус 
                     FROM Студенты
                     {baseWhereClause}
-                    ORDER BY ФИО
-                    OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY";
+                    ORDER BY ФИО";
 
-                command.Parameters.AddWithValue("@Offset", (page - 1) * pageSize);
-                command.Parameters.AddWithValue("@PageSize", pageSize);
                 command.CommandText = query;
 
                 var students = new List<object>();

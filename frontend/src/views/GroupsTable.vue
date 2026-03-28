@@ -31,6 +31,11 @@
       :options.sync="internalOptions"
       :server-items-length="totalGroups"
       :loading="loading"
+      :footer-props="{
+        'items-per-page-options': [5, 10, 20, 50],
+        'items-per-page-text': 'Записей на странице:',
+        'page-text': '{0}-{1} из {2}'
+      }"
       class="elevation-1 mt-4"
     >
       <template v-slot:[`item.названиеГруппы`]="{ item }">
@@ -73,18 +78,31 @@ export default {
   },
   watch: {
     internalOptions: {
-      handler(val) {
-        this.$router.push({ 
-          query: { ...this.$route.query, page: val.page, pageSize: val.itemsPerPage } 
-        }).catch(() => {});
-        this.loadGroups();
+      handler(newVal) {
+        if (newVal.page !== this.page || newVal.itemsPerPage !== this.pageSize) {
+          this.$router.push({
+            query: { 
+              ...this.$route.query, 
+              page: newVal.page, 
+              pageSize: newVal.itemsPerPage 
+            }
+          }).catch(() => {});
+        }
       },
       deep: true
     },
-    page(val) { if (this.internalOptions.page !== val) this.internalOptions.page = val; },
-    pageSize(val) { if (this.internalOptions.itemsPerPage !== val) this.internalOptions.itemsPerPage = val; }
+    page() {
+      this.internalOptions.page = this.page;
+      this.loadGroups();
+    },
+    pageSize() {
+      this.internalOptions.itemsPerPage = this.pageSize;
+      this.loadGroups();
+    },
   },
-  mounted() { this.loadAllFilters(); },
+
+  mounted() { this.loadAllFilters(); this.loadGroups();}, 
+
   methods: {
     triggerSearch() {
       this.internalOptions.page = 1;
@@ -120,7 +138,7 @@ export default {
         query: { 
           ...this.$route.query, 
           groupName: item.названиеГруппы
-        } 
+        }
       });
     }
   }

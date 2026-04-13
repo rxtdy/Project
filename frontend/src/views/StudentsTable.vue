@@ -68,6 +68,7 @@
 </template>
 
 <script>
+import { parse, format } from 'date-fns';
 import axios from 'axios';
 const API_URL = "https://localhost:7222";
 
@@ -97,7 +98,9 @@ export default {
       ],
       snackbar: { show: false, text: '', color: 'success' },
       headers: [
-        { text: "ФИО", value: "fio", sortable: false, width: "40%" },
+        { text: "ФИО", value: "fio", sortable: false, width: "20%" },
+        { text: "Дата рождения", value: "birthDate", sortable: false },
+        { text: "Дата зачисления", value: "admissionDate", sortable: false },
         { text: "Номер Зачетки", value: "recordBook", sortable: false },
         { text: "Пол", value: "gender", sortable: false },
         { text: "Средний балл", value: "gpa", sortable: false },
@@ -120,12 +123,27 @@ export default {
           статус: this.filters.status,
         };
         const { data } = await axios.get(`${API_URL}/students`, { params });
-        this.students = data.items;
+        this.students = data.items.map(student => {
+          return {
+            ...student,
+            admissionDate: this.getRussianDate(student.admissionDate),
+            birthDate: this.getRussianDate(student.birthDate)
+          };
+        });
         this.originalStudents = JSON.parse(JSON.stringify(this.students));
       } catch (error) {
         this.showSnack("Ошибка загрузки", "error");
       } finally {
         this.loading = false;
+      }
+    },
+    getRussianDate(date) {
+      if (!date) return '—';
+      try {
+        const dateObj = parse(date, "M/d/yyyy h:mm:ss a", new Date());
+        return format(dateObj, 'dd.MM.yyyy');
+      } catch (e) {
+        return date;
       }
     },
     getStatusText(status) {

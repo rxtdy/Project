@@ -107,12 +107,23 @@ export default {
     triggerSearch() {
       this.internalOptions.page = 1;
       this.loadGroups();
+      this.loadAllFilters();
     },
     async loadAllFilters() {
       try {
-        const response = await axios.get(`${API_URL}/filters`);
+        const params = { 
+          факультет: this.filters.faculty,
+          формаОбучения: this.filters.form,
+          уровеньОбучения: this.filters.level,
+          учебныйГод: this.filters.year,
+          курсы: this.filters.courses.length > 0 ? this.filters.courses.join(',') : null
+        };
+        
+        const response = await axios.get(`${API_URL}/filters`, { params });
         Object.assign(this, response.data);
-      } catch (error) { console.error(error); }
+      } catch (error) { 
+        console.error(error); 
+      }
     },
     async loadGroups() {
       this.loading = true;
